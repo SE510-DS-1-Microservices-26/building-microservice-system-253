@@ -18,6 +18,7 @@ import (
 	"cafeteria-delivery/internal/base/http/routes"
 	"cafeteria-delivery/internal/base/repositories"
 	"cafeteria-delivery/pkg/postgres"
+	"cafeteria-delivery/pkg/rabbitmq"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/gofiber/fiber/v2"
@@ -61,10 +62,17 @@ func main() {
 	// adapters
 	usersClient := adapters.NewUsersClient(os.Getenv("USERS_SERVICE_URL"))
 
+	rabbitConn, err := rabbitmq.Dial(os.Getenv("RABBITMQ_URL"))
+	if err != nil {
+		log.Fatalf("failed to connect to rabbitmq: %v", err)
+	}
+	defer rabbitConn.Close()
+	publisher := adapters.NewRabbitPublisher(rabbitConn)
+
 	// services
 	itemCategoryService := services.NewItemCategoryService(itemCategoryRepo)
 	itemService := services.NewItemService(itemRepo)
-	orderService := services.NewOrderService(orderRepo, itemRepo, usersClient)
+	orderService := services.NewOrderService(orderRepo, itemRepo, usersClient, publisher)
 
 	// handlers
 	itemCategoryHandlers := handlers.NewItemCategoryHandlers(itemCategoryService, paginationConfig)

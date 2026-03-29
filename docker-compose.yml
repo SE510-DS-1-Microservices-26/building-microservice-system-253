@@ -1,12 +1,28 @@
 volumes:
   core_db_data:
   users_db_data:
+  notification_db_data:
 
 networks:
   cafeteria_network:
     driver: bridge
 
 services:
+  # rabbitmq
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - cafeteria_network
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
   # core database
   core_database:
     image: postgres:alpine
@@ -61,11 +77,16 @@ services:
       DB_PASSWORD: ${CORE_DB_PASSWORD}
       DB_DATABASE: ${CORE_DB_DATABASE}
       USERS_SERVICE_URL: ${USERS_SERVICE_URL:-http://users_service:8081}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}
     volumes:
       - .:/go/src/app
     depends_on:
-      - core_database
-      - core_migrations
+      core_database:
+        condition: service_started
+      core_migrations:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
     networks:
       - cafeteria_network
 
@@ -127,6 +148,59 @@ services:
     depends_on:
       - users_database
       - users_migrations
+    networks:
+      - cafeteria_network
+
+  # notification database
+  notification_database:
+    image: postgres:alpine
+    container_name: notification_database
+    ports:
+      - "${NOTIFICATION_DB_PORT:-5434}:5432"
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${NOTIFICATION_DB_USERNAME}
+      POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
+      POSTGRES_DB: ${NOTIFICATION_DB_DATABASE}
+    volumes:
+      - notification_db_data:/var/lib/postgresql/data
+    networks:
+      - cafeteria_network
+
+  # notification migrations
+  notification_migrations:
+    image: migrate/migrate
+    volumes:
+      - ./database/notification/migrations:/migrations
+    command: -path=/migrations -database "postgres://${NOTIFICATION_DB_USERNAME}:${NOTIFICATION_DB_PASSWORD}@notification_database:5432/${NOTIFICATION_DB_DATABASE}?sslmode=disable" up
+    depends_on:
+      - notification_database
+    restart: on-failure
+    networks:
+      - cafeteria_network
+
+  # notification service
+  notification_service:
+    build:
+      context: .
+      dockerfile: docker/notification/Dockerfile
+    container_name: notification_service
+    environment:
+      DB_HOST: ${NOTIFICATION_DB_HOST:-notification_database}
+      DB_PORT: 5432
+      DB_USERNAME: ${NOTIFICATION_DB_USERNAME}
+      DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
+      DB_DATABASE: ${NOTIFICATION_DB_DATABASE}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}
+    volumes:
+      - .:/go/src/app
+    depends_on:
+      notification_database:
+        condition: service_started
+      notification_migrations:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
     networks:
       - cafeteria_network
 

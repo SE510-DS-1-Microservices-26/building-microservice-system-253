@@ -1,26 +1,41 @@
 package services
 
 import (
-	ports2 "cafeteria-delivery/internal/base/core/ports"
-	"context"
-	"fmt"
-
 	"cafeteria-delivery/internal/base/adapters"
 	"cafeteria-delivery/internal/base/core/domain"
+	"cafeteria-delivery/internal/base/core/ports"
 	"cafeteria-delivery/internal/base/dto"
 	customErrors "cafeteria-delivery/internal/base/errors"
+	"cafeteria-delivery/pkg/events"
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 type OrderService struct {
-	repo        ports2.OrderRepository
-	itemRepo    ports2.ItemRepository
+	repo        ports.OrderRepository
+	itemRepo    ports.ItemRepository
 	usersClient *adapters.UsersClient
+	publisher   *adapters.RabbitPublisher
 }
 
-var _ ports2.OrderService = (*OrderService)(nil)
+var _ ports.OrderService = (*OrderService)(nil)
 
-func NewOrderService(repo ports2.OrderRepository, itemRepository ports2.ItemRepository, usersClient *adapters.UsersClient) *OrderService {
-	return &OrderService{repo: repo, itemRepo: itemRepository, usersClient: usersClient}
+func NewOrderService(
+	repository ports.OrderRepository,
+	itemRepository ports.ItemRepository,
+	usersClient *adapters.UsersClient,
+	pub *adapters.RabbitPublisher,
+) *OrderService {
+	return &OrderService{
+		repo:        repository,
+		itemRepo:    itemRepository,
+		usersClient: usersClient,
+		publisher:   pub,
+	}
 }
 
 // Store - store new order with its items
@@ -74,6 +89,24 @@ func (s *OrderService) Store(ctx context.Context, order *domain.Order) error {
 	// calculate the total price of the order
 	for _, item := range order.Items {
 		order.TotalPrice += item.UnitPrice * float64(item.Quantity)
+	}
+
+	// publish integration event
+	summary := fmt.Sprintf("order #%d placed", order.ID)
+	if order.UserID != nil {
+		summary = fmt.Sprintf("order #%d placed by user %d", order.ID, *order.UserID)
+	}
+	payload := events.CoreItemCreatedEvent{
+		EventID:       uuid.New().String(),
+		OccurredAt:    time.Now().UTC(),
+		CorrelationID: uuid.New().String(),
+		CoreItemID:    order.ID,
+		OwnerUserID:   order.UserID,
+		Summary:       summary,
+	}
+	publishErr := s.publisher.PublishOrderCreated(ctx, payload)
+	if publishErr != nil {
+		log.Printf("failed to publish core-item.created event for order %d: %v", order.ID, publishErr)
 	}
 
 	return nil
