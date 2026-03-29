@@ -1,0 +1,3 @@
+api:
+  default_limit: 15
+  max_allowed_limit: 100

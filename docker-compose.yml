@@ -1,66 +1,151 @@
-# Volumes
 volumes:
-  cafeteria_delivery_db_data:
+  core_db_data:
+  users_db_data:
 
-# Networks
 networks:
-  cafeteria_delivery_network:
+  cafeteria_network:
     driver: bridge
 
 services:
-  # database
-  cafeteria_delivery_database:
+  # core database
+  core_database:
     image: postgres:alpine
-    container_name: cafeteria_delivery_database
+    container_name: core_database
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "${CORE_DB_PORT:-5432}:5432"
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USERNAME}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_USER: ${CORE_DB_USERNAME}
+      POSTGRES_PASSWORD: ${CORE_DB_PASSWORD}
+      POSTGRES_DB: ${CORE_DB_DATABASE}
     volumes:
-      - cafeteria_delivery_db_data:/var/lib/postgresql/data
+      - core_db_data:/var/lib/postgresql/data
     networks:
-      - cafeteria_delivery_network
+      - cafeteria_network
 
-  # migrations
-  cafeteria_delivery_migrations:
+  # core migrations
+  core_migrations:
     image: migrate/migrate
     volumes:
-      - ./database/migrations:/migrations
-    command: -path=/migrations -database "postgres://${DB_USERNAME}:${DB_PASSWORD}@cafeteria_delivery_database:5432/${DB_DATABASE}?sslmode=disable" up
+      - ./database/base/migrations:/migrations
+    command: -path=/migrations -database "postgres://${CORE_DB_USERNAME}:${CORE_DB_PASSWORD}@core_database:5432/${CORE_DB_DATABASE}?sslmode=disable" up
     depends_on:
-      - cafeteria_delivery_database
+      - core_database
     restart: on-failure
     networks:
-      - cafeteria_delivery_network
+      - cafeteria_network
 
-  # seed
-  cafeteria_delivery_seed:
+  # core seed
+  core_seed:
     image: postgres:alpine
     volumes:
-      - ./database/seeds/seed.sql:/seed.sql
-    command: psql "postgres://${DB_USERNAME}:${DB_PASSWORD}@cafeteria_delivery_database:5432/${DB_DATABASE}?sslmode=disable" -f /seed.sql
+      - ./database/base/seeds/seed.sql:/seed.sql
+    command: psql "postgres://${CORE_DB_USERNAME}:${CORE_DB_PASSWORD}@core_database:5432/${CORE_DB_DATABASE}?sslmode=disable" -f /seed.sql
     depends_on:
-      - cafeteria_delivery_migrations
+      - core_migrations
     restart: on-failure
     networks:
-      - cafeteria_delivery_network
+      - cafeteria_network
 
-  # api
-  cafeteria_delivery_api:
+  # core service
+  core_service:
     build:
       context: .
-      dockerfile: docker/Dockerfile
-    env_file:
-      - .env
-    ports:
-      - "${PUBLIC_PORT}:${LISTEN_PORT}"
+      dockerfile: docker/base/Dockerfile
+    container_name: core_service
+    environment:
+      APP_PORT: ${CORE_APP_PORT:-8080}
+      DB_HOST: ${CORE_DB_HOST:-core_database}
+      DB_PORT: 5432
+      DB_USERNAME: ${CORE_DB_USERNAME}
+      DB_PASSWORD: ${CORE_DB_PASSWORD}
+      DB_DATABASE: ${CORE_DB_DATABASE}
+      USERS_SERVICE_URL: ${USERS_SERVICE_URL:-http://users_service:8081}
     volumes:
       - .:/go/src/app
     depends_on:
-      - cafeteria_delivery_database
-      - cafeteria_delivery_migrations
+      - core_database
+      - core_migrations
     networks:
-      - cafeteria_delivery_network
+      - cafeteria_network
+
+  # users database
+  users_database:
+    image: postgres:alpine
+    container_name: users_database
+    ports:
+      - "${USERS_DB_PORT:-5433}:5432"
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${USERS_DB_USERNAME}
+      POSTGRES_PASSWORD: ${USERS_DB_PASSWORD}
+      POSTGRES_DB: ${USERS_DB_DATABASE}
+    volumes:
+      - users_db_data:/var/lib/postgresql/data
+    networks:
+      - cafeteria_network
+
+  # users migrations
+  users_migrations:
+    image: migrate/migrate
+    volumes:
+      - ./database/users/migrations:/migrations
+    command: -path=/migrations -database "postgres://${USERS_DB_USERNAME}:${USERS_DB_PASSWORD}@users_database:5432/${USERS_DB_DATABASE}?sslmode=disable" up
+    depends_on:
+      - users_database
+    restart: on-failure
+    networks:
+      - cafeteria_network
+
+  # users seed
+  users_seed:
+    image: postgres:alpine
+    volumes:
+      - ./database/users/seeds/seed.sql:/seed.sql
+    command: psql "postgres://${USERS_DB_USERNAME}:${USERS_DB_PASSWORD}@users_database:5432/${USERS_DB_DATABASE}?sslmode=disable" -f /seed.sql
+    depends_on:
+      - users_migrations
+    restart: on-failure
+    networks:
+      - cafeteria_network
+
+  # users service
+  users_service:
+    build:
+      context: .
+      dockerfile: docker/users/Dockerfile
+    container_name: users_service
+    environment:
+      APP_PORT: ${USERS_APP_PORT:-8081}
+      DB_HOST: ${USERS_DB_HOST:-users_database}
+      DB_PORT: 5432
+      DB_USERNAME: ${USERS_DB_USERNAME}
+      DB_PASSWORD: ${USERS_DB_PASSWORD}
+      DB_DATABASE: ${USERS_DB_DATABASE}
+    volumes:
+      - .:/go/src/app
+    depends_on:
+      - users_database
+      - users_migrations
+    networks:
+      - cafeteria_network
+
+  # gateway
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/gateway/Dockerfile
+    container_name: gateway
+    ports:
+      - "${GATEWAY_PUBLIC_PORT:-8000}:${GATEWAY_APP_PORT:-8000}"
+    environment:
+      APP_PORT: ${GATEWAY_APP_PORT:-8000}
+      CORE_SERVICE_URL: ${CORE_SERVICE_URL:-http://core_service:8080}
+      USERS_SERVICE_URL: ${USERS_SERVICE_URL:-http://users_service:8081}
+    volumes:
+      - .:/go/src/app
+    depends_on:
+      - core_service
+      - users_service
+    networks:
+      - cafeteria_network
