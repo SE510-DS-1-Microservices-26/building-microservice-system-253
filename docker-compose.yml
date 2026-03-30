@@ -2,6 +2,7 @@ volumes:
   core_db_data:
   users_db_data:
   notification_db_data:
+  workflow_db_data:
 
 networks:
   cafeteria_network:
@@ -204,6 +205,59 @@ services:
     networks:
       - cafeteria_network
 
+  # workflow database
+  workflow_database:
+    image: postgres:alpine
+    container_name: workflow_database
+    ports:
+      - "${WORKFLOW_DB_PORT:-5435}:5432"
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${WORKFLOW_DB_USERNAME}
+      POSTGRES_PASSWORD: ${WORKFLOW_DB_PASSWORD}
+      POSTGRES_DB: ${WORKFLOW_DB_DATABASE}
+    volumes:
+      - workflow_db_data:/var/lib/postgresql/data
+    networks:
+      - cafeteria_network
+
+  # workflow migrations
+  workflow_migrations:
+    image: migrate/migrate
+    volumes:
+      - ./database/workflow/migrations:/migrations
+    command: -path=/migrations -database "postgres://${WORKFLOW_DB_USERNAME}:${WORKFLOW_DB_PASSWORD}@workflow_database:5432/${WORKFLOW_DB_DATABASE}?sslmode=disable" up
+    depends_on:
+      - workflow_database
+    restart: on-failure
+    networks:
+      - cafeteria_network
+
+  # workflow service
+  workflow_service:
+    build:
+      context: .
+      dockerfile: docker/workflow/Dockerfile
+    container_name: workflow_service
+    environment:
+      APP_PORT: ${WORKFLOW_APP_PORT:-8082}
+      DB_HOST: ${WORKFLOW_DB_HOST:-workflow_database}
+      DB_PORT: 5432
+      DB_USERNAME: ${WORKFLOW_DB_USERNAME}
+      DB_PASSWORD: ${WORKFLOW_DB_PASSWORD}
+      DB_DATABASE: ${WORKFLOW_DB_DATABASE}
+      USERS_SERVICE_URL: ${USERS_SERVICE_URL:-http://users_service:8081}
+      CORE_SERVICE_URL: ${CORE_SERVICE_URL:-http://core_service:8080}
+    volumes:
+      - .:/go/src/app
+    depends_on:
+      - workflow_database
+      - workflow_migrations
+      - users_service
+      - core_service
+    networks:
+      - cafeteria_network
+
   # gateway
   gateway:
     build:
@@ -216,10 +270,12 @@ services:
       APP_PORT: ${GATEWAY_APP_PORT:-8000}
       CORE_SERVICE_URL: ${CORE_SERVICE_URL:-http://core_service:8080}
       USERS_SERVICE_URL: ${USERS_SERVICE_URL:-http://users_service:8081}
+      WORKFLOW_SERVICE_URL: ${WORKFLOW_SERVICE_URL:-http://workflow_service:8082}
     volumes:
       - .:/go/src/app
     depends_on:
       - core_service
       - users_service
+      - workflow_service
     networks:
       - cafeteria_network

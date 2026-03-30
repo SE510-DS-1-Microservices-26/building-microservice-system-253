@@ -75,7 +75,7 @@ func setupOrderService() *OrderService {
 	itemRepo := newMockItemRepository()
 	_ = itemRepo.Store(ctx, &domain.Item{Name: "Burger", Price: 9.99, Quantity: 10})
 	_ = itemRepo.Store(ctx, &domain.Item{Name: "Cola", Price: 2.99, Quantity: 5})
-	return NewOrderService(newMockOrderRepository(), itemRepo, nil)
+	return NewOrderService(newMockOrderRepository(), itemRepo, nil, nil)
 }
 
 func TestOrderService_Store(t *testing.T) {

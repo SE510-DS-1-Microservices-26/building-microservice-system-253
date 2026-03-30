@@ -15,15 +15,19 @@ import (
 )
 
 func main() {
-	// fetch and check core and users url data from env
+	// fetch and check service urls from env
 	coreURL := os.Getenv("CORE_SERVICE_URL")
 	usersURL := os.Getenv("USERS_SERVICE_URL")
+	workflowURL := os.Getenv("WORKFLOW_SERVICE_URL")
 
 	if coreURL == "" {
 		log.Fatal("CORE_SERVICE_URL is required")
 	}
 	if usersURL == "" {
 		log.Fatal("USERS_SERVICE_URL is required")
+	}
+	if workflowURL == "" {
+		log.Fatal("WORKFLOW_SERVICE_URL is required")
 	}
 
 	// fiber engine
@@ -53,6 +57,10 @@ func main() {
 
 	app.All("/users/*", func(c *fiber.Ctx) error {
 		return proxy.Do(c, usersURL+c.OriginalURL())
+	})
+
+	app.All("/workflow/*", func(c *fiber.Ctx) error {
+		return proxy.Do(c, workflowURL+c.OriginalURL())
 	})
 
 	// start server

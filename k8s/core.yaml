@@ -1,0 +1,156 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: core-config
+  namespace: cafeteria
+data:
+  DB_HOST: "core-db"
+  DB_PORT: "5432"
+  DB_DATABASE: "core_db"
+  APP_PORT: "8080"
+  USERS_SERVICE_URL: "http://users-service:8081"
+  RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: core-secret
+  namespace: cafeteria
+type: Opaque
+stringData:
+  DB_USERNAME: "dev"
+  DB_PASSWORD: "root1234"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: core-db
+  namespace: cafeteria
+spec:
+  serviceName: core-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: core-db
+  template:
+    metadata:
+      labels:
+        app: core-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:alpine
+          env:
+            - name: POSTGRES_DB
+              value: "core_db"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: core-secret
+                  key: DB_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: core-secret
+                  key: DB_PASSWORD
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "dev", "-d", "core_db"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "dev", "-d", "core_db"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: core-db-data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: core-db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: core-db
+  namespace: cafeteria
+spec:
+  selector:
+    app: core-db
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core-service
+  namespace: cafeteria
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: core-service
+  template:
+    metadata:
+      labels:
+        app: core-service
+    spec:
+      containers:
+        - name: core-service
+          image: cafeteria-core:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: core-config
+            - secretRef:
+                name: core-secret
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: core-service
+  namespace: cafeteria
+spec:
+  selector:
+    app: core-service
+  ports:
+    - port: 8080
+      targetPort: 8080
